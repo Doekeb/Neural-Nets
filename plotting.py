@@ -15,8 +15,8 @@ def animate(functions):
     fig = plt.figure()
     ax = p3.Axes3D(fig)
 
-    X = np.arange(0, 1, 0.05)
-    Y = np.arange(0, 1, 0.05)
+    X = np.arange(0, 1.05, 0.05)
+    Y = np.arange(0, 1.05, 0.05)
     X, Y = np.meshgrid(X, Y)
 
     def update(num, data, surf):
@@ -30,7 +30,7 @@ def animate(functions):
     # print(functions[0](0,0))
     # print(functions[1](0,0))
 
-    data = np.array([f(X,Y) for f in functions])
+    data = np.array([[list(map(f,xrow,yrow)) for xrow, yrow in zip(X,Y)] for f in functions])
     surf = ax.plot_surface(X,Y,data[0])
     set_axes()
 

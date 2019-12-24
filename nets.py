@@ -1,6 +1,7 @@
 import sys
 import numpy as np
 from matplotlib import pyplot as plt
+import itertools as iter
 rd = np.random
 import plotting
 
@@ -92,10 +93,10 @@ n_samples = 1000
 training_set = {(x,y):(np.round(x) or np.round(y)) for (x,y) in [rd.rand(2) for _ in range(n_samples)]}
 
 def sum_of_squares(results, targets):
-    return sum([(result-target)**2 for result, target in zip(results, targets)])
+    return sum((results-targets)**2)
 
-def d_sum_of_squares(results, targets, index):
-    return sum([2*(results[index]-targets[index])])
+def d_sum_of_squares(results, targets):
+    return 2*(results-targets)
 
 def loss(result, target):
     return (result-target)**2
@@ -105,19 +106,20 @@ def d_loss(result, target):
 
 class LogicGateNetwork():
     def __init__(self, activator='sigmoid', log=True, loss='sum_of_squares'):
-        self.log = log
+        self.activator_name = activator
         self.activator = getattr(sys.modules[__name__], activator)
+        self.loss_name = loss
         self.loss = getattr(sys.modules[__name__], loss)
         self.d_loss = getattr(sys.modules[__name__], 'd_'+loss)
         self.neuron = Neuron(rd.normal(size=2), rd.normal(), activator=activator)
-        if log:
-            # note: the array of losses will always be one smaller than the array of weights and biases
-            self.log = {'loss':[], 'weights':[(self.neuron.weights[0], self.neuron.weights[1])], 'bias':[self.neuron.bias]}
+        self.log = log and {'loss':[],
+                            'weights':[(self.neuron.weights[0], self.neuron.weights[1])],
+                            'bias':[self.neuron.bias]}
 
     def reset(self):
         if self.log:
             self.log = True
-        self.__init__(log=self.log)
+        self.__init__(activator=self.activator_name, log=self.log, loss=self.loss_name)
 
     def train(self, data, rate=0.1, batch_size=1, epochs=1):
         for _ in range(epochs): # Repeat for how many epochs there are
@@ -131,7 +133,8 @@ class LogicGateNetwork():
             if n_leftovers == 0:
                 batches = [items[batch_size*i:batch_size*(i+1)] for i in range(len(items) // batch_size)]
             else:
-                batches = [items[batch_size*i:batch_size*(i+1)] for i in range(len(items) // batch_size)] + [items[-n_leftovers:]]
+                batches = [items[batch_size*i:batch_size*(i+1)] for i in range(len(items) // batch_size)] \
+                        + [items[-n_leftovers:]]
 
             # Adjust weights once for each batch
             for batch in batches:
@@ -142,7 +145,7 @@ class LogicGateNetwork():
                 for (key, target) in batch:
                     result = self.neuron.fire(np.array(key, np.float64))
                     loss_sum += self.loss([result], [target])
-                    d_loss_sum += self.d_loss([result], [target], 0)
+                    d_loss_sum += self.d_loss([result], [target])[0]
 
                 # Average the loss and its derivative
                 loss_average = loss_sum / len(batch)
@@ -184,3 +187,128 @@ class LogicGateNetwork():
             bias = self.log['bias']
         functions = [(lambda z: (lambda x, y: self.activator(z[0]*x + z[1]*y + z[2])))((w0, w1, b)) for ((w0, w1), b) in zip(weights, bias)]
         plotting.animate(functions)
+
+'''
+test_set = {(i,j,k): np.array([i or j, k]) for i, j, k in iter.product([0,1], repeat=3)}
+n_samples = 1000
+training_set = {(x,y):(np.round(x) or np.round(y)) for (x,y) in [rd.rand(2) for _ in range(n_samples)]}
+'''
+
+test_set = {(i,j): np.array([i or j]) for i,j in iter.product([0,1], repeat=2)}
+n_samples = 1000
+training_set = {(x,y): np.array([np.round(x) or np.round(y)]) for (x,y) in [rd.rand(2) for _ in range(n_samples)]}
+
+
+# TODO: Eliminate the connections matrix. It's unnecessary.
+
+class NeuralNetwork():
+    def __init__(self, layer_sizes, connections=None, activator='sigmoid', log=True, loss='sum_of_squares'):
+        self.n_layers = len(layer_sizes) - 1
+        self.layer_sizes = layer_sizes
+        if connections == None:
+            self.connections = [np.ones((m,n)) for (n,m) in zip(layer_sizes, layer_sizes[1:])]
+        else:
+            self.connections = [np.array(connection) for connection in connections]
+        self.activator_name = activator
+        self.activator = getattr(sys.modules[__name__], activator)
+        self.loss_name = loss
+        self.loss = getattr(sys.modules[__name__], loss)
+        self.d_loss = getattr(sys.modules[__name__], 'd_'+loss)
+        self.neurons = [[Neuron(k[i] * rd.normal(size=n), rd.normal(), activator=activator)
+                         for i in range(m)]
+                         for (n,m,k) in zip(layer_sizes, layer_sizes[1:], self.connections)]
+        self.log = log and {'loss':[],
+                            'weights':[self.get_weights()],
+                            'biases':[self.get_biases()]}
+                            # 'functions':[lambda x, connections=self.connections, neurons=self.neurons: self.fire(x, connections=connections, neurons=neurons)]}
+
+    def get_weights(self):
+        return [self.connections[i] * np.array([N.weights for N in self.neurons[i]]) for i in range(self.n_layers)]
+
+    def get_biases(self):
+        return [np.array([N.bias for N in self.neurons[i]]) for i in range(self.n_layers)]
+
+    def reset(self):
+        if self.log:
+            self.log = True
+        self.__init__(self.layer_sizes, connections=self.connections, activator=self.activator_name, log=self.log, loss=self.loss_name)
+
+    # Fire the network with the given inputs
+    def fire(self, inputs):
+        results = np.array(inputs)
+        for c_matrix, n_list in zip(self.connections, self.neurons):
+            results = np.array([N.fire(row*results) for (row, N) in zip(c_matrix, n_list)])
+        return np.array(results)
+
+    def back_prop(self, inputs, rate):
+        results = np.diag(inputs)
+        for n_list in reversed(self.neurons):
+            results = np.array([N.back_prop(result) for (N, result) in zip(n_list, results.T)])
+
+    # Test the network on the (labelled) data set
+    def test(self, data):
+        for (key, value) in data.items():
+            result = self.fire(np.array(key, np.float64))
+            print("Input: %s, Output: %s, Expected: %s" % (key, result, value))
+
+    def train(self, data, rate=0.1, batch_size=1, epochs=1):
+        for _ in range(epochs): # Repeat for how many epochs there are
+
+            # Get the data and randomize it
+            items = list(data.items())
+            rd.shuffle(items)
+
+            # Form the batches
+            n_leftovers = len(data) % batch_size
+            if n_leftovers == 0:
+                batches = [items[batch_size*i:batch_size*(i+1)]
+                           for i in range(len(items) // batch_size)]
+            else:
+                batches = [items[batch_size*i:batch_size*(i+1)]
+                           for i in range(len(items) // batch_size)] \
+                        + [items[-n_leftovers:]]
+
+            # Adjust weights once for each batch
+            for batch in batches:
+                loss_sum = 0
+                d_loss_sums = np.zeros(self.layer_sizes[-1])
+
+                # Fire the network once for each sample
+                for (key, targets) in batch:
+                    results = self.fire(np.array(key, np.float64))
+                    loss_sum += self.loss(results, targets)
+                    d_loss_sums += self.d_loss(results, targets)
+
+                # Average the loss and its derivative
+                loss_average = loss_sum / len(batch)
+                d_loss_averages = d_loss_sums / len(batch)
+
+                # Back-propogate with loss average
+                self.back_prop(d_loss_averages, rate)
+                # self.neuron.back_prop(np.array([d_loss_average]), rate=rate)
+
+                if self.log: # Log result
+                    self.log['loss'] += [loss_average]
+                    self.log['weights'] += [self.get_weights()]
+                    self.log['biases'] += [self.get_biases()]
+                    # self.log['functions'] += [lambda x, connections=self.connections, neurons=self.neurons: self.fire(x, connections=connections, neurons=neurons)]
+
+    # Plot the (smoothed) loss function over this network's training life
+    def plot_loss(self):
+        log = np.array(self.log['loss'])
+        L = len(log)
+        plotting.plot_moving_average(log, window=int(np.ceil(L/100)))
+
+    # TODO: FIX THIS
+    '''
+    Not currently working
+    def animate(self, max_frames=200):
+        # Only try this for inpuit size == 2 and output size == 1
+        # This is more an order of magnitude than an actual max size
+        L = len(self.log['functions'])
+        if L > max_frames:
+            functions = self.log['functions'][::L//max_frames]
+        else:
+            functions = self.log['functions']
+        plotting.animate([lambda x, y, f=f: f([x,y])[0] for f in functions])
+    '''
