@@ -4,6 +4,10 @@ from matplotlib import pyplot as plt
 import itertools as iter
 rd = np.random
 import plotting
+import mpl_toolkits.mplot3d.axes3d as p3
+from matplotlib.widgets import Slider
+from copy import deepcopy
+from matplotlib import animation
 
 def sigmoid(z): # sigmoidal activator function (between 0 and 1)
     return 1/(1+np.exp(-z))
@@ -64,9 +68,13 @@ class Neuron():
     def __repr__(self):
         return "A neuron with weights %s, bias %s, and %s activator" % (self.weights, self.bias, self.activator_name)
 
-    def fire(self, inputs):
+    def fire(self, inputs, weights=None, bias=None):
+        if weights is None:
+            weights = self.weights
+        if bias is None:
+            bias = self.bias
         self.inputs = np.array(inputs, np.float64)
-        self.z = np.dot(inputs, self.weights)+self.bias
+        self.z = np.dot(inputs, weights) + bias
         self.output = self.activator(self.z)
         return self.output
 
@@ -220,7 +228,6 @@ class NeuralNetwork():
         self.log = log and {'loss':[],
                             'weights':[self.get_weights()],
                             'biases':[self.get_biases()]}
-                            # 'functions':[lambda x, connections=self.connections, neurons=self.neurons: self.fire(x, connections=connections, neurons=neurons)]}
 
     def get_weights(self):
         return [self.connections[i] * np.array([N.weights for N in self.neurons[i]]) for i in range(self.n_layers)]
@@ -234,10 +241,14 @@ class NeuralNetwork():
         self.__init__(self.layer_sizes, connections=self.connections, activator=self.activator_name, log=self.log, loss=self.loss_name)
 
     # Fire the network with the given inputs
-    def fire(self, inputs):
+    def fire(self, inputs, weights=None, biases=None):
         results = np.array(inputs)
-        for c_matrix, n_list in zip(self.connections, self.neurons):
-            results = np.array([N.fire(row*results) for (row, N) in zip(c_matrix, n_list)])
+        if weights is None and biases is None:
+            for c_matrix, n_list in zip(self.connections, self.neurons):
+                results = np.array([N.fire(row*results) for (row, N) in zip(c_matrix, n_list)])
+        else:
+            for c_matrix, n_list, w_matrix, b_array in zip(self.connections, self.neurons, weights, biases):
+                results = np.array([N.fire(row*results, weights=w, bias=b) for (row, N, w, b) in zip(c_matrix, n_list, w_matrix, b_array)])
         return np.array(results)
 
     def back_prop(self, inputs, rate):
@@ -291,7 +302,6 @@ class NeuralNetwork():
                     self.log['loss'] += [loss_average]
                     self.log['weights'] += [self.get_weights()]
                     self.log['biases'] += [self.get_biases()]
-                    # self.log['functions'] += [lambda x, connections=self.connections, neurons=self.neurons: self.fire(x, connections=connections, neurons=neurons)]
 
     # Plot the (smoothed) loss function over this network's training life
     def plot_loss(self):
@@ -299,16 +309,94 @@ class NeuralNetwork():
         L = len(log)
         plotting.plot_moving_average(log, window=int(np.ceil(L/100)))
 
+    def plot_function(self):
+        fig = plt.figure()
+        ax = p3.Axes3D(fig)
+        ax.set_zlim(0.0, 1.0)
+
+        X = np.arange(0, 1.05, 0.05)
+        Y = np.arange(0, 1.05, 0.05)
+        X, Y = np.meshgrid(X, Y)
+
+        Z = []
+        for xrow, yrow in zip(X, Y):
+            row = []
+            for x, y in zip(xrow, yrow):
+                row += [self.fire(np.array([x,y]))[0]]
+            Z += [row]
+        Z = np.array(Z)
+
+        surf = ax.plot_surface(X,Y,Z)
+        plt.show()
+
+
     # TODO: FIX THIS
-    '''
-    Not currently working
+    # Only try this for inpuit size == 2 and output size == 1
     def animate(self, max_frames=200):
-        # Only try this for inpuit size == 2 and output size == 1
-        # This is more an order of magnitude than an actual max size
-        L = len(self.log['functions'])
+        L = len(self.log['weights'])
         if L > max_frames:
-            functions = self.log['functions'][::L//max_frames]
+            weights = np.array(self.log['weights'][::L//max_frames])
+            biases = np.array(self.log['biases'][::L//max_frames])
         else:
-            functions = self.log['functions']
-        plotting.animate([lambda x, y, f=f: f([x,y])[0] for f in functions])
-    '''
+            weights = np.array(self.log['weights'])
+            biases = np.array(self.log['biases'])
+
+        X = np.arange(0, 1.05, 0.05)
+        Y = np.arange(0, 1.05, 0.05)
+        data = np.array([[[self.fire([x,y], weights=ws, biases=bs)[0] for x in X] for y in Y] for ws, bs in zip(weights, biases)])
+        X, Y = np.meshgrid(X,Y)
+
+        fig = plt.figure()
+        ax = p3.Axes3D(fig)
+
+        def update(num, data, surf):
+            ax.cla()
+            set_axes()
+            surf = ax.plot_surface(X,Y,data[num])
+
+        def set_axes():
+            ax.set_zlim(0.0, 1.0)
+
+        surf = ax.plot_surface(X,Y,data[0])
+        set_axes()
+
+        ani = animation.FuncAnimation(fig, update, len(data), fargs=(data,surf), interval=20)
+
+        plt.show()
+
+    def slider(self, max_frames=200):
+        L = len(self.log['weights'])
+        if L > max_frames:
+            weights = np.array(self.log['weights'][::L//max_frames])
+            biases = np.array(self.log['biases'][::L//max_frames])
+        else:
+            weights = np.array(self.log['weights'])
+            biases = np.array(self.log['biases'])
+        L = len(weights)
+
+        X = np.arange(0, 1.05, 0.05)
+        Y = np.arange(0, 1.05, 0.05)
+        data = np.array([[[self.fire([x,y], weights=ws, biases=bs)[0] for x in X] for y in Y] for ws, bs in zip(weights, biases)])
+        X, Y = np.meshgrid(X,Y)
+
+        fig = plt.figure()
+        ax = p3.Axes3D(fig)
+
+        def update(num):
+            ax.cla()
+            set_axes()
+            surf = ax.plot_surface(X,Y,data[int(num)])
+
+        def set_axes():
+            ax.set_zlim(0.0, 1.0)
+
+        surf = ax.plot_surface(X,Y,data[0])
+        set_axes()
+
+        axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
+        slider = Slider(axslider, 'Time', 0, L-1, valinit=0, valstep=1, orientation='vertical')
+        slider.on_changed(update)
+
+        # ani = animation.FuncAnimation(fig, update, len(data), fargs=(data,surf), interval=20)
+
+        plt.show()
