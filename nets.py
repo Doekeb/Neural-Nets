@@ -55,6 +55,36 @@ def d_quadratic(z):
     if z >=0 and z <= 1:
         return np.float64(1)-z
 
+def relu(z):
+    if z >= 0:
+        return z
+    if z <= 0:
+        return np.float64(0)
+
+def d_relu(z):
+    if z >= 0:
+        return np.float64(1)
+    if z <= 0:
+        return np.float64(0)
+
+def lrelu(z):
+    if z >= 0:
+        return z
+    if z <= 0:
+        return 0.01*z
+
+def d_lrelu(z):
+    if z >= 0:
+        return np.float64(1)
+    if z <= 0:
+        return 0.01
+
+def linear(z):
+    return z
+
+def d_linear(z):
+    return 1
+
 class Neuron():
     def __init__(self, weights, bias, activator='sigmoid'):
         self.weights = np.array(weights, np.float64)
@@ -82,8 +112,8 @@ class Neuron():
         # sigmoid and tanh have nice derivatives
         if self.activator_name == 'sigmoid':
             factor = sum(inputs) * self.output * (1-self.output)
-        elif self.activator_name == 'tanh':
-            factor = sum(inputs) * (1-self.output**2)
+        # elif self.activator_name == 'tanh':
+        #     factor = sum(inputs) * 1/2*(1-self.output**2)
         else:
             factor = sum(inputs) * self.d_activator(self.z)
         old_weights = np.array(self.weights) # Make a copy
@@ -105,6 +135,18 @@ def sum_of_squares(results, targets):
 
 def d_sum_of_squares(results, targets):
     return 2*(results-targets)
+
+def mse(results, targets):
+    return sum((results-targets)**2) / len(results)
+
+def d_mse(results, targets):
+    return 2*(results-targets) / len(results)
+
+def L2(results, targets):
+    return np.sqrt(sum((results-targets)**2))
+
+def d_L2(results, targets):
+    return results / np.sqrt(sum((results-targets)**2))
 
 def loss(result, target):
     return (result-target)**2
@@ -196,18 +238,9 @@ class LogicGateNetwork():
         functions = [(lambda z: (lambda x, y: self.activator(z[0]*x + z[1]*y + z[2])))((w0, w1, b)) for ((w0, w1), b) in zip(weights, bias)]
         plotting.animate(functions)
 
-'''
-test_set = {(i,j,k): np.array([i or j, k]) for i, j, k in iter.product([0,1], repeat=3)}
-n_samples = 1000
-training_set = {(x,y):(np.round(x) or np.round(y)) for (x,y) in [rd.rand(2) for _ in range(n_samples)]}
-'''
-
-test_set = {(i,j): np.array([i or j]) for i,j in iter.product([0,1], repeat=2)}
-n_samples = 1000
-training_set = {(x,y): np.array([np.round(x) or np.round(y)]) for (x,y) in [rd.rand(2) for _ in range(n_samples)]}
 
 
-# TODO: Eliminate the connections matrix. It's unnecessary.
+
 
 class NeuralNetwork():
     def __init__(self, layer_sizes, connections=None, activator='sigmoid', log=True, loss='sum_of_squares'):
@@ -286,7 +319,7 @@ class NeuralNetwork():
 
                 # Fire the network once for each sample
                 for (key, targets) in batch:
-                    results = self.fire(np.array(key, np.float64))
+                    results = self.fire(np.array(key))
                     loss_sum += self.loss(results, targets)
                     d_loss_sums += self.d_loss(results, targets)
 
@@ -309,13 +342,36 @@ class NeuralNetwork():
         L = len(log)
         plotting.plot_moving_average(log, window=int(np.ceil(L/100)))
 
-    def plot_function(self):
+
+
+
+    def _get_dimensions(self):
+        return (self.layer_sizes[0], self.layer_sizes[-1])
+
+    def _check_dimensions(self):
+        if self._get_dimensions() not in ((1,1), (1,2), (2,1)):
+            raise(ValueError('(Input, Output) dimensions must be one of (1,1), (2,1), or (1,2)'))
+
+
+
+
+
+    def _plot_function_11(self, coarseness):
+        X = np.arange(0, 1+coarseness, coarseness)
+        Y = [self.fire(x)[0] for x in X]
+        ax = plt.gca()
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(0.0, 1.0)
+        ax.plot(X,Y)
+        plt.show()
+
+    def _plot_function_21(self, coarseness):
         fig = plt.figure()
         ax = p3.Axes3D(fig)
         ax.set_zlim(0.0, 1.0)
 
-        X = np.arange(0, 1.05, 0.05)
-        Y = np.arange(0, 1.05, 0.05)
+        X = np.arange(0, 1+coarseness, coarseness)
+        Y = np.arange(0, 1+coarseness, coarseness)
         X, Y = np.meshgrid(X, Y)
 
         Z = []
@@ -329,27 +385,113 @@ class NeuralNetwork():
         surf = ax.plot_surface(X,Y,Z)
         plt.show()
 
+    def _plot_function_12(self, coarseness):
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_zlim(0.0, 1.0)
 
-    # TODO: FIX THIS
-    # Only try this for inpuit size == 2 and output size == 1
-    def animate(self, max_frames=200):
+        X = np.arange(0, 1+coarseness, coarseness)
+        results = [self.fire([x]) for x in X]
+        Y = np.array([result[0] for result in results])
+        Z = np.array([result[1] for result in results])
+
+        ax.plot(X,Y,Z)
+
+        plt.show()
+
+
+    def plot_function(self, coarseness=None):
+        self._check_dimensions()
+        a,b = self._get_dimensions()
+        if coarseness == None:
+            if (a,b) in ((1,1), (1,2)):
+                coarseness = 0.001
+            else:
+                coarseness = 0.01
+        f = getattr(self, '_plot_function_%s%s' % (a,b))
+        f(coarseness)
+
+
+
+
+    def _setup_11(self, max_frames, coarseness):
         L = len(self.log['weights'])
+        step_size = L//max_frames
         if L > max_frames:
-            weights = np.array(self.log['weights'][::L//max_frames])
-            biases = np.array(self.log['biases'][::L//max_frames])
+            weights = self.log['weights'][::step_size]
+            biases = self.log['biases'][::step_size]
         else:
-            weights = np.array(self.log['weights'])
-            biases = np.array(self.log['biases'])
+            weights = self.log['weights']
+            biases = self.log['biases']
 
-        X = np.arange(0, 1.05, 0.05)
-        Y = np.arange(0, 1.05, 0.05)
+        X = np.arange(0, 1+coarseness, coarseness)
+        data = np.array([[self.fire([x], weights=ws, biases=bs)[0] for x in X] for ws, bs in zip(weights,biases)])
+
+        return (L, step_size, data, X)
+
+    def _setup_21(self, max_frames, coarseness):
+        L = len(self.log['weights'])
+        step_size = L//max_frames
+        if L > max_frames:
+            weights = self.log['weights'][::step_size]
+            biases = self.log['biases'][::step_size]
+        else:
+            weights = self.log['weights']
+            biases = self.log['biases']
+
+        X = np.arange(0, 1+coarseness, coarseness)
+        Y = np.arange(0, 1+coarseness, coarseness)
         data = np.array([[[self.fire([x,y], weights=ws, biases=bs)[0] for x in X] for y in Y] for ws, bs in zip(weights, biases)])
         X, Y = np.meshgrid(X,Y)
 
-        fig = plt.figure()
-        ax = p3.Axes3D(fig)
+        return (L, step_size, data, X, Y)
 
-        def update(num, data, surf):
+    def _setup_12(self, max_frames, coarseness):
+        L = len(self.log['weights'])
+        step_size = L//max_frames
+        if L > max_frames:
+            weights = self.log['weights'][::step_size]
+            biases = self.log['biases'][::step_size]
+        else:
+            weights = self.log['weights']
+            biases = self.log['biases']
+
+        X = np.arange(0, 1+coarseness, coarseness)
+        data = np.array([[self.fire([x], weights=ws, biases=bs) for x in X] for ws, bs in zip(weights, biases)])
+        Ys = np.array([[result[0] for result in datum] for datum in data])
+        Zs = np.array([[result[1] for result in datum] for datum in data])
+
+        return (L, step_size, X, Ys, Zs)
+
+
+
+
+
+
+    def _animate_11(self, max_frames, coarseness):
+        def update(num):
+            ax.cla()
+            set_axes()
+            line = ax.plot(X, data[num])
+
+        def set_axes():
+            ax.set_xlim(0.0, 1.0)
+            ax.set_ylim(0.0, 1.0)
+
+        L, step_size, data, X = self._setup_11(max_frames, coarseness)
+
+        fig = plt.figure()
+        ax = fig.gca()
+        ax.plot(X,data[0])
+
+        ani = animation.FuncAnimation(fig, update, len(data), interval=20)
+
+        plt.show()
+
+    def _animate_21(self, max_frames=200, coarseness=0.05):
+        def update(num):
             ax.cla()
             set_axes()
             surf = ax.plot_surface(X,Y,data[num])
@@ -357,46 +499,135 @@ class NeuralNetwork():
         def set_axes():
             ax.set_zlim(0.0, 1.0)
 
-        surf = ax.plot_surface(X,Y,data[0])
-        set_axes()
-
-        ani = animation.FuncAnimation(fig, update, len(data), fargs=(data,surf), interval=20)
-
-        plt.show()
-
-    def slider(self, max_frames=200):
-        L = len(self.log['weights'])
-        if L > max_frames:
-            weights = np.array(self.log['weights'][::L//max_frames])
-            biases = np.array(self.log['biases'][::L//max_frames])
-        else:
-            weights = np.array(self.log['weights'])
-            biases = np.array(self.log['biases'])
-        L = len(weights)
-
-        X = np.arange(0, 1.05, 0.05)
-        Y = np.arange(0, 1.05, 0.05)
-        data = np.array([[[self.fire([x,y], weights=ws, biases=bs)[0] for x in X] for y in Y] for ws, bs in zip(weights, biases)])
-        X, Y = np.meshgrid(X,Y)
+        _, __, data, X, Y = self._setup_21(max_frames, coarseness)
 
         fig = plt.figure()
         ax = p3.Axes3D(fig)
 
+        surf = ax.plot_surface(X,Y,data[0])
+        set_axes()
+
+        ani = animation.FuncAnimation(fig, update, len(data), interval=20)
+
+        plt.show()
+
+    def _animate_12(self, max_frames, coarseness):
         def update(num):
             ax.cla()
             set_axes()
-            surf = ax.plot_surface(X,Y,data[int(num)])
+            line = ax.plot(X,Ys[num],Zs[num])
+
+        def set_axes():
+            ax.set_xlim(0.0, 1.0)
+            ax.set_ylim(0.0, 1.0)
+            ax.set_zlim(0.0, 1.0)
+
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+
+        L, step_size, X, Ys, Zs = self._setup_12(max_frames, coarseness)
+
+        line = ax.plot(X,Ys[0],Zs[0])
+        set_axes()
+
+        ani = animation.FuncAnimation(fig, update, len(Ys), interval=20)
+
+        plt.show()
+
+    def animate(self, max_frames=200, coarseness=None):
+        self._check_dimensions()
+        a,b = self._get_dimensions()
+        if coarseness == None:
+            if (a,b) in ((1,1), (1,2)):
+                coarseness = 0.005
+            else:
+                coarseness = 0.05
+        f = getattr(self, '_animate_%s%s' % self._get_dimensions())
+        f(max_frames, coarseness)
+
+
+
+
+
+
+    def _slider_11(self, max_frames, coarseness):
+        def update(num):
+            ax.cla()
+            set_axes()
+            ax.plot(X, data[int(num//step_size)])
+
+        def set_axes():
+            ax.set_xlim(0.0, 1.0)
+            ax.set_ylim(0.0, 1.0)
+
+        L, step_size, data, X = self._setup_11(max_frames, coarseness)
+
+        fig = plt.figure()
+        ax = fig.gca()
+        ax.plot(X,data[0])
+        set_axes()
+
+        axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
+        slider = Slider(axslider, 'Time', 0, L-1, valinit=0, valstep=step_size, orientation='vertical')
+        slider.on_changed(update)
+
+        plt.show()
+
+    def _slider_21(self, max_frames, coarseness):
+        def update(num):
+            ax.cla()
+            set_axes()
+            surf = ax.plot_surface(X,Y,data[int(num//step_size)])
 
         def set_axes():
             ax.set_zlim(0.0, 1.0)
+
+        L, step_size, data, X, Y = self._setup_21(max_frames, coarseness)
+
+        fig = plt.figure()
+        ax = p3.Axes3D(fig)
 
         surf = ax.plot_surface(X,Y,data[0])
         set_axes()
 
         axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
-        slider = Slider(axslider, 'Time', 0, L-1, valinit=0, valstep=1, orientation='vertical')
+        slider = Slider(axslider, 'Time', 0, L-1, valinit=0, valstep=step_size, orientation='vertical')
         slider.on_changed(update)
 
-        # ani = animation.FuncAnimation(fig, update, len(data), fargs=(data,surf), interval=20)
+        plt.show()
+
+    def _slider_12(self, max_frames, coarseness):
+        def update(num):
+            ax.cla()
+            set_axes()
+            line = ax.plot(X,Ys[int(num//step_size)],Zs[int(num//step_size)])
+
+        def set_axes():
+            ax.set_xlim(0.0, 1.0)
+            ax.set_ylim(0.0, 1.0)
+            ax.set_zlim(0.0, 1.0)
+
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')
+
+        L, step_size, X, Ys, Zs = self._setup_12(max_frames, coarseness)
+
+        line = ax.plot(X,Ys[0],Zs[0])
+        set_axes()
+
+        axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
+        slider = Slider(axslider, 'Time', 0, L-1, valinit=0, valstep=step_size, orientation='vertical')
+        slider.on_changed(update)
 
         plt.show()
+
+    def slider(self, max_frames=200, coarseness=None):
+        self._check_dimensions()
+        a,b = self._get_dimensions()
+        if coarseness == None:
+            if (a,b) in ((1,1), (1,2)):
+                coarseness = 0.01
+            else:
+                coarseness = 0.05
+        f = getattr(self, '_slider_%s%s' % self._get_dimensions())
+        f(max_frames, coarseness)
