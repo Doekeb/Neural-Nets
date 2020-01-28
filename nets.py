@@ -1,13 +1,12 @@
 import sys
 import numpy as np
+from scipy.signal import savgol_filter
 import networkx as nx
 from matplotlib import pyplot as plt
+from mpl_toolkits.mplot3d import axes3d, Axes3D
 import itertools as iter
 rd = np.random
-import plotting
-import mpl_toolkits.mplot3d.axes3d as p3
 from matplotlib.widgets import Slider
-from copy import deepcopy
 from matplotlib import animation
 
 
@@ -121,7 +120,7 @@ def d_linear(z):
     """
     return np.float64(1)
 
-class Neuron():
+class Neuron:
     """
     This is a class for a single neuron to be used in a neural network.
 
@@ -302,7 +301,7 @@ def d_L2(results, targets):
 # indicating the activator types per-layer, or a list of lists of strings
 # indicating the activator types per-neuron
 
-class NeuralNetwork():
+class NeuralNetwork:
     """
     This is a class for a network of neurons.
 
@@ -320,8 +319,7 @@ class NeuralNetwork():
             'weights', and 'biases', and values the corresponding data after each
             training step.
     """
-    def __init__(self, layer_sizes, connections=None, activators='sigmoid',
-                 log=True, loss='sum_of_squares'):
+    def __init__(self, layer_sizes, connections=None, activators='sigmoid', log=True, loss='sum_of_squares'):
         """
         Create a new Neural Network instance.
 
@@ -374,9 +372,15 @@ class NeuralNetwork():
                                               layer_sizes[1:],
                                               self.connections,
                                               activators)]
-        self.log = log and {'loss':[],
-                            'weights':[self.get_weights()],
-                            'biases':[self.get_biases()]}
+
+        if log:
+            self.log = {'loss':[],
+                        'weights':[],
+                        'biases':[]}
+        else:
+            self.log = False
+
+        self.plot = self.Plot(self)
 
     def get_weights(self):
         """
@@ -533,107 +537,256 @@ class NeuralNetwork():
                     self.log['weights'] += [self.get_weights()]
                     self.log['biases'] += [self.get_biases()]
 
-    def plot_loss(self):
-        """
-        Plot the (moving average) loss function over this network's training life
-        """
-        log = np.array(self.log['loss'])
-        L = len(log)
-        plotting.plot_moving_average(log, window=int(np.ceil(L/100)))
+    class Plot:
+        def __init__(self, network):
+            self.network = network
 
+            if network.log is False:
+                self.log = False
+            else:
+                self.log = True
 
+            if self.log:
+                self.loss = network.log['loss']
+                self.weights = network.log['weights']
+                self.biases = network.log['biases']
 
+        def _get_dimensions(self):
+            """
+            Return the dimensions of the input and output vectors for this network.
+            """
+            return (self.network.layer_sizes[0], self.network.layer_sizes[-1])
 
+        def _check_dimensions(self):
+            """
+            Check that the input and ouput dimensions are appropriate sizes to plot. Raise
+            an error if not.
+            """
+            if self._get_dimensions() not in ((1,1), (1,2), (2,1)):
+                msg = '(Input, Output) dimensions must be one of %s, %s, or %s.' \
+                      %((1,1), (2,1), (1,2))
+                raise(ValueError(msg))
 
-    # def animate_plot(self, max_frames=):
-    #     """
-    #     FILL ME IN
-    #     """
-    #     L, step_size, weights, biases = \
-    #                             self._get_filtered_data(max_frames=max_frames)
-    #
-    #     # X = np.arange(0, 1+coarseness, coarseness)
-    #     # data = np.array([[self.fire([x], weights=ws, biases=bs)[0] for x in X] for ws, bs in zip(weights,biases)])
-    #     #
-    #     # return (L, step_size, data)
+        def _get_filtered_data(self, n_frames):
+            """
+            Return filtered data from the training log.
 
-    def _plot(self, weights=None, biases=None, ax=None):
-        """
-        Set up a graph representing this network.
+            Parameters:
+                n_frames (integer): The number of frames to use for animations
 
-        Parameters:
-            weights (list of matrices): The weight matrices to use for plotting
-                (default: None, in which case the neuron weights are used)
-            biases (list of arrays): The bias arrays to use for plotting (default: None,
-                in which case the neuron biases are used)
-        """
-        if weights is None:
-            weights = self.get_weights()
-        if biases is None:
-            biases = self.get_biases()
+            Returns:
+                3-tuple: (time stamps to achieve n_frames frames,
+                          weight data filtered to n_frames,
+                          bias data filtered to n_frames)
+            """
+            times = np.round(np.linspace(0, len(self.weights)-1, n_frames))
+            weights = [self.weights[int(t)] for t in times]
+            biases = [self.biases[int(t)] for t in times]
 
-        neurons = self.neurons
-        v_scale = 1
-        height = v_scale * max(self.layer_sizes)
-        h_scale = 1
-        width = h_scale * (self.n_layers + 1)
+            return (times, weights, biases)
 
-        pos = {}
-        labels = {}
+        def _setup_11(self, x_range, n_frames=None, **kwargs):
+            """
+            Return plotting data assuming the network represents a 1-d to 1-d function.
 
-        G = nx.DiGraph()
-        n_layers = self.n_layers + 1
-        shapes = ['<', 'v', '^', 'd', '8', 'h', 'p', 's', 'o']
-        activator_shapes = {'input': '>'}
-        for i in range(n_layers):
-            n_nodes = self.layer_sizes[i]
-            for n in range(n_nodes):
-                node = (i,n)
-                G.add_node(node)
-                position = np.array([width / n_layers * i,
-                                     height - height / (n_nodes+1) * (n+1)])
-                pos[node] = position
-                if i == 0:
-                    labels[node] = ""
-                    color = (0.0, 0.0, 0.0, 1.0)
-                    shape = '>'
-                else:
-                    bias = biases[i-1][n]
-                    labels[node] = str(bias)
-                    color = (1-sigmoid(bias), 0.0, sigmoid(bias),
-                             abs(2*(sigmoid(bias)-1/2)))
-                    activator_name = neurons[i-1][n].activator_name
+            Parameters:
+                x_range (x_min, x_max, n_points): The minimum and maximum x-values to plot,
+                    and the number of points to use
+                n_frames (None or integer): The number of frames to use in animations and
+                    sliders. If this argument is supplied (and not None), then also supply
+                    the keywork argument ax (axes object).
+
+            Returns:
+                tuple: If n_frames is None, a 2-tuple (X,Y). Otherwise, a 3-tuple (X,Y,f).
+                    X is the x-values to plot, Y is the (most current) y-values to plot,
+                    f is an animation/slider update function.
+            """
+            X = np.linspace(*x_range)
+            Y = np.array([self.network.fire([x])[0] for x in X])
+
+            if n_frames is None:
+                return (X, Y)
+
+            else:
+                _, weights, biases = self._get_filtered_data(n_frames)
+                Ys = [np.array([self.network.fire([x], weights=w, biases=b)[0]
+                               for x in X])
+                     for w, b in zip(weights, biases)]
+
+                ax = kwargs.pop('ax')
+                L = len(self.weights)
+                step_size = L / n_frames
+
+                def update(num):
+                    ax.cla()
+                    ax.plot(X, Ys[int(round(num/step_size))], **kwargs)
+
+                return (X, Ys[0], update)
+
+        def _setup_12(self, x_range, n_frames=None, **kwargs):
+            """
+            Return plotting data assuming the network represents a 1-d to 1-d function.
+
+            Parameters:
+                x_range (x_min, x_max, n_points): The minimum and maximum x-values to plot,
+                    and the number of points to use
+                n_frames (None or integer): The number of frames to use in animations and
+                    sliders. If this argument is supplied (and not None), then also supply
+                    the keywork argument ax (axes object).
+
+            Returns:
+                tuple: If n_frames is None, a 3-tuple (X,Y,Z). Otherwise, a 4-tuple
+                    (X,Y,Z,f). X is the x-values to plot, Y is the (most current) y-values
+                    to plot, Z is the (most current) z-values to plot, f is an
+                    animation/slider update function.
+            """
+            X = np.linspace(*x_range)
+            results = [self.network.fire([x]) for x in X]
+            Y = np.array([result[0] for result in results])
+            Z = np.array([result[1] for result in results])
+
+            if n_frames is None:
+                return (X, Y, Z)
+
+            else:
+                _, weights, biases = self._get_filtered_data(n_frames)
+                data = [np.array([self.network.fire([x], weights=ws, biases=bs)
+                                  for x in X])
+                        for ws, bs in zip(weights, biases)]
+                Ys = np.array([[result[0] for result in datum]
+                               for datum in data])
+                Zs = np.array([[result[1] for result in datum]
+                               for datum in data])
+
+                ax = kwargs.pop('ax')
+                L = len(self.weights)
+                step_size = L / n_frames
+
+                def update(num):
+                    ax.cla()
+                    ax.plot(X, Ys[int(round(num/step_size))],
+                            Zs[int(round(num/step_size))], **kwargs)
+
+                return (X, Ys[0], Zs[0], update)
+
+        def _setup_21(self, x_range, y_range, n_frames=None, **kwargs):
+            """
+            Prepare animation and slider data for 2-d to 1-d functions.
+
+            Parameters:
+                x_range (x_min, x_max, n_points): The minimum and maximum x-values to plot,
+                    and the number of points to use
+                y_range (x_min, x_max, n_points): The minimum and maximum x-values to plot,
+                    and the number of points to use
+                n_frames (None or integer): The number of frames to use in animations and
+                    sliders. If this argument is supplied (and not None), then also supply
+                    the keywork argument ax (axes object).
+
+            Returns:
+                tuple: If n_frames is None, a 3-tuple (X,Y,Z). Otherwise, a 4-tuple
+                    (X,Y,Z,f). X is the x-values to plot, Y is the (most current) y-values
+                    to plot, Z is the (most current) z-values to plot, f is an
+                    animation/slider update function.
+            """
+            X = np.linspace(*x_range)
+            Y = np.linspace(*y_range)
+            Z = np.array([[self.network.fire([x,y])[0] for x in X] for y in Y])
+
+            if n_frames is None:
+                return tuple(np.meshgrid(X, Y)) + (Z,)
+
+            else:
+                _, weights, biases = self._get_filtered_data(n_frames)
+                Zs = [np.array([[self.network.fire([x,y], weights=ws,
+                                                   biases=bs)[0]
+                                 for x in X] for y in Y])
+                      for ws, bs in zip(weights, biases)]
+                X, Y = np.meshgrid(X, Y)
+
+                ax = kwargs.pop('ax')
+                L = len(self.weights)
+                step_size = L / n_frames
+
+                def update(num):
+                    ax.cla()
+                    ax.plot_surface(X, Y, Zs[int(round(num/step_size))],
+                                    **kwargs)
+
+                return (X, Y, Zs[0], update)
+
+        def _setup_graph(self, ax, n_frames=None):
+            neurons = self.network.neurons
+            n_layers = self.network.n_layers + 1
+            layer_sizes = self.network.layer_sizes
+            height = max(layer_sizes)
+            width = n_layers
+            shapes = ['<', 'v', '^', 'd', '8', 'h', 'p', 's', 'o']
+            activator_shapes = {'input': '>'}
+
+            G = nx.DiGraph()
+            pos = {}
+            sh = {}
+
+            # Add all nodes to the graph and set static properties
+            for i in range(n_layers):
+                n_nodes = layer_sizes[i]
+                for n in range(n_nodes):
+                    node = (i, n)
+                    G.add_node(node)
+
+                    # Determine the position and log it
+                    position = np.array([width / n_layers * i,
+                                         height - height / (n_nodes+1) * (n+1)])
+                    pos[node] = position
+
+                    # Determine the shape to use and log it
+                    if i == 0:
+                        activator_name = 'input'
+                    else:
+                        activator_name = neurons[i-1][n].activator_name
                     try:
                         shape = activator_shapes[activator_name]
                     except KeyError:
                         try:
                             shape = shapes.pop()
-                            activator_shapes = {activator_name: shape}
                         except IndexError:
                             shape = '<'
-                            activator_shapes = {activator_name: shape}
+                        finally:
+                            activator_shapes[activator_name] = shape
+                    sh[node] = shape
 
-                nx.draw_networkx_nodes(G,
-                                       pos={node:position},
-                                       nodelist=[node],
-                                       node_color=[color],
-                                       edgecolors=[(0.0, 0.0, 0.0, 1.0)],
-                                       node_shape=shape,
-                                       ax=ax)
+            # Add all edges to the graph
+            for i in range(n_layers-1):
+                for n in range(layer_sizes[i]):
+                    for m in range(layer_sizes[i+1]):
+                        edge = ((i,n), (i+1,m))
+                        G.add_edges_from([edge])
 
-
-        max_thickness = 20
-        for i in range(self.n_layers):
-            for n in range(self.layer_sizes[i]):
-                for m in range(self.layer_sizes[i+1]):
-                    # print([((i,n), (i+1,m))])
-                    # print(weights[i])
+            def draw(weights, biases):
+                for node in G.nodes():
+                    i, n = node
+                    if i == 0:
+                        color = (0.0, 0.0, 0.0, 1.0)
+                    else:
+                        bias = biases[i-1][n]
+                        # color = (1-sigmoid(bias), 0.0, sigmoid(bias),
+                        #          abs(2*(sigmoid(bias)-1/2)))
+                        color = (1-sigmoid(bias), 0.0, sigmoid(bias), 1.0)
+                    nx.draw_networkx_nodes(G,
+                                           pos=pos,
+                                           nodelist=[node],
+                                           node_color=[color],
+                                           edgecolors=[(0.0, 0.0, 0.0, 1.0)],
+                                           node_shape=sh[node],
+                                           ax=ax)
+                max_thickness = 20
+                for edge in G.edges:
+                    s, t = edge
+                    i, n = s
+                    _, m = t
                     weight = weights[i][m][n]
-                    edge = ((i,n), (i+1,m), {'weight':weight})
-                    G.add_edges_from([edge])
                     alpha = abs(2*(sigmoid(weight)-1/2))
-                    color = (1.0, 0.0, 0.0, alpha) if np.sign(weight) == 1 \
-                            else (0.0, 0.0, 1.0, alpha)
+                    color = (1-sigmoid(weight), 0.0, sigmoid(weight), alpha)
                     width = max_thickness * alpha
                     nx.draw_networkx_edges(G,
                                            pos=pos,
@@ -643,505 +796,456 @@ class NeuralNetwork():
                                            arrows=False,
                                            ax=ax)
 
-    def plot(self, weights=None, biases=None):
-        """
-        Show a graph representing this network.
+            if n_frames is None:
+                draw(self.network.get_weights(), self.network.get_biases())
 
-        Parameters:
-            weights (list of matrices): The weight matrices to use for plotting
-                (default: None, in which case the neuron weights are used)
-            biases (list of arrays): The bias arrays to use for plotting (default: None,
-                in which case the neuron biases are used)
-        """
-        self._plot(weights=weights, biases=biases)
-        plt.show()
-
-
-
-
-    def plot_animation(self, max_frames=200):
-        """
-        Animate the graph representing this network over its training life.
-
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for the animation
-        """
-        def update(num):
-            ax.cla()
-            self._plot(weights=weights[num], biases=biases[num])
-
-        # def set_axes():
-        #     ax.set_xlim(0.0, 1.0)
-        #     ax.set_ylim(0.0, 1.0)
-
-        L, step_size, weights, biases = \
-                                self._get_filtered_data(max_frames=max_frames)
-
-        fig = plt.figure()
-        ax = fig.gca()
-        self._plot(weights=weights[0], biases=biases[0])
-
-        ani = animation.FuncAnimation(fig, update, len(weights), interval=50)
-
-        # return ani
-
-        plt.show()
-
-    def plot_slider(self, max_frames=200):
-        """
-        Show a graph representing this network with a slider ranging over its training
-        life.
-
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for the animation
-        """
-        def update(num):
-            ax.cla()
-            self._plot(weights=weights[int(num//step_size)], biases=biases[int(num//step_size)], ax=ax)
-
-        # def set_axes():
-        #     ax.set_xlim(0.0, 1.0)
-        #     ax.set_ylim(0.0, 1.0)
-
-        L, step_size, weights, biases = \
-                                self._get_filtered_data(max_frames=max_frames)
-
-        fig = plt.figure()
-        ax = fig.gca()
-        self._plot(weights=weights[0], biases=biases[0])
-
-        axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
-        slider = Slider(axslider, 'Time', 0, L-1, valinit=0, valstep=step_size,
-                        orientation='vertical')
-        slider.on_changed(update)
-
-        plt.show()
-
-
-    def _get_dimensions(self):
-        """
-        Return the dimensions of the input and output vectors for this network.
-        """
-        return (self.layer_sizes[0], self.layer_sizes[-1])
-
-    def _check_dimensions(self):
-        """
-        Check that the input and ouput dimensions are appropriate sizes to plot. Raise
-        an error if not.
-        """
-        if self._get_dimensions() not in ((1,1), (1,2), (2,1)):
-            msg = '(Input, Output) dimensions must be one of %s, %s, or %s.' \
-                  %((1,1), (2,1), (1,2))
-            raise(ValueError(msg))
-
-    def _plot_function_11(self, coarseness):
-        """
-        Plot the function represented by this network, assuming inputs and outputs are
-        both one-dimensional.
-
-        Parameters:
-            coarseness (float): The distance between sample points
-        """
-        X = np.arange(0, 1+coarseness, coarseness)
-        Y = [self.fire(x)[0] for x in X]
-        ax = plt.gca()
-        ax.set_xlim(0.0, 1.0)
-        ax.set_ylim(0.0, 1.0)
-        ax.plot(X,Y)
-        plt.show()
-
-    def _plot_function_21(self, coarseness):
-        """
-        Plot the function represented by this network, assuming inputs are 2-dimensional
-        and outputs are 1-dimensional.
-
-        Parameters:
-            coarseness (float): The distance between sample points
-        """
-        fig = plt.figure()
-        ax = p3.Axes3D(fig)
-        ax.set_zlim(0.0, 1.0)
-
-        X = np.arange(0, 1+coarseness, coarseness)
-        Y = np.arange(0, 1+coarseness, coarseness)
-        X, Y = np.meshgrid(X, Y)
-
-        Z = []
-        for xrow, yrow in zip(X, Y):
-            row = []
-            for x, y in zip(xrow, yrow):
-                row += [self.fire(np.array([x,y]))[0]]
-            Z += [row]
-        Z = np.array(Z)
-
-        surf = ax.plot_surface(X,Y,Z)
-        plt.show()
-
-    def _plot_function_12(self, coarseness):
-        """
-        Plot the function represented by this network, assuming inputs are 1-dimensional
-        and outputs are 2-dimensional.
-
-        Parameters:
-            coarseness (float): The distance between sample points
-        """
-        fig = plt.figure()
-        ax = fig.gca(projection='3d')
-        ax.set_xlim(0.0, 1.0)
-        ax.set_ylim(0.0, 1.0)
-        ax.set_zlim(0.0, 1.0)
-
-        X = np.arange(0, 1+coarseness, coarseness)
-        results = [self.fire([x]) for x in X]
-        Y = np.array([result[0] for result in results])
-        Z = np.array([result[1] for result in results])
-
-        ax.plot(X,Y,Z)
-
-        plt.show()
-
-    def plot_function(self, coarseness=None):
-        """
-        Plot (if possible) the function represented by this network.
-
-        Parameters:
-            coarseness (float): The distance between sample points (default is 0.001
-                for 1-d to 1-d functions, and 0.01 for all other functions)
-        """
-        self._check_dimensions()
-        a,b = self._get_dimensions()
-        if coarseness == None:
-            if (a,b) in ((1,1), (1,2)):
-                coarseness = 0.001
             else:
-                coarseness = 0.01
-        f = getattr(self, '_plot_function_%s%s' % (a,b))
-        f(coarseness)
+                _, weights, biases = self._get_filtered_data(n_frames)
+                L = len(self.weights)
+                step_size = L / n_frames
 
+                draw(weights[0], biases[0])
 
-    def _get_filtered_data(self, max_frames):
-        """
-        Return filter data from the training log.
+                def update(num):
+                    ax.cla()
+                    draw(weights[int(round(num/step_size))],
+                         biases[int(round(num/step_size))])
 
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for animations
+                return update
 
-        Returns:
-            4-tuple: (length of log,
-                      step size required to achieve desired number of frames,
-                      weight data filtered to max_frames,
-                      bias data filtered to max_frames)
-        """
-        L = len(self.log['weights'])
-        step_size = L//max_frames
-        if L > max_frames:
-            weights = self.log['weights'][::step_size]
-            biases = self.log['biases'][::step_size]
-        else:
-            weights = self.log['weights']
-            biases = self.log['biases']
-
-        return (L, step_size, weights, biases)
-
-    def _setup_11(self, max_frames, coarseness):
-        """
-        Prepare animation and slider data for 1-d to 1-d functions.
-
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for animations
-            coarseness (float): The distance between sample points
-
-        Returns:
-            4-tuple: (length of log,
-                      step size required to achieve desired number of frames,
-                      output data frames,
-                      input data (same for each frame))
-        """
-        L, step_size, weights, biases = \
-                                self._get_filtered_data(max_frames=max_frames)
-
-        X = np.arange(0, 1+coarseness, coarseness)
-        data = np.array([[self.fire([x], weights=ws, biases=bs)[0] for x in X]
-                         for ws, bs in zip(weights,biases)])
-
-        return (L, step_size, data, X)
-
-    def _setup_21(self, max_frames, coarseness):
-        """
-        Prepare animation and slider data for 2-d to 1-d functions.
-
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for animations
-            coarseness (float): The distance between sample points
-
-        Returns:
-            5-tuple: (length of log,
-                      step size required to achieve desired number of frames,
-                      output data frames,
-                      input data for first variable,
-                      input data for second variable)
-        """
-        L, step_size, weights, biases = \
-                                self._get_filtered_data(max_frames=max_frames)
-
-        X = np.arange(0, 1+coarseness, coarseness)
-        Y = np.arange(0, 1+coarseness, coarseness)
-        data = np.array([[[self.fire([x,y], weights=ws, biases=bs)[0]
-                           for x in X]
-                          for y in Y]
-                         for ws, bs in zip(weights, biases)])
-        X, Y = np.meshgrid(X,Y)
-
-        return (L, step_size, data, X, Y)
-
-    def _setup_12(self, max_frames, coarseness):
-        """
-        Prepare animation and slider data for 1-d to 2-d functions.
-
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for animations
-            coarseness (float): The distance between sample points
-
-        Returns:
-        5-tuple: (length of log,
-                  step size required to achieve desired number of frames,
-                  input data (same for each frame),
-                  output data frames for first output variable,
-                  output data frames for second output variable)
-        """
-        L, step_size, weights, biases = \
-                                self._get_filtered_data(max_frames=max_frames)
-
-        X = np.arange(0, 1+coarseness, coarseness)
-        data = np.array([[self.fire([x], weights=ws, biases=bs) for x in X]
-                         for ws, bs in zip(weights, biases)])
-        Ys = np.array([[result[0] for result in datum] for datum in data])
-        Zs = np.array([[result[1] for result in datum] for datum in data])
-
-        return (L, step_size, X, Ys, Zs)
-
-
-
-
-
-
-    def _animate_11(self, max_frames, coarseness):
-        """
-        Animate the function represented by this network over its training life,
-        assuming inputs and outputs are both 1-dimensional.
-
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for animations
-            coarseness (float): The distance between sample points
-        """
-        def update(num):
-            ax.cla()
-            set_axes()
-            line = ax.plot(X, data[num])
-
-        def set_axes():
-            ax.set_xlim(0.0, 1.0)
-            ax.set_ylim(0.0, 1.0)
-
-        L, step_size, data, X = self._setup_11(max_frames, coarseness)
-
-        fig = plt.figure()
-        ax = fig.gca()
-        ax.plot(X,data[0])
-
-        ani = animation.FuncAnimation(fig, update, len(data), interval=20)
-
-        plt.show()
-
-    def _animate_21(self, max_frames, coarseness):
-        """
-        Animate the function represented by this network over its training life,
-        assuming inputs are 2-dimensional and outputs are 1-dimensional
-
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for animations
-            coarseness (float): The distance between sample points
-        """
-        def update(num):
-            ax.cla()
-            set_axes()
-            surf = ax.plot_surface(X,Y,data[num])
-
-        def set_axes():
-            ax.set_zlim(0.0, 1.0)
-
-        _, __, data, X, Y = self._setup_21(max_frames, coarseness)
-
-        fig = plt.figure()
-        ax = p3.Axes3D(fig)
-
-        surf = ax.plot_surface(X,Y,data[0])
-        set_axes()
-
-        ani = animation.FuncAnimation(fig, update, len(data), interval=20)
-
-        plt.show()
-
-    def _animate_12(self, max_frames, coarseness):
-        """
-        Animate the function represented by this network over its training life,
-        assuming inputs are 1-dimensional and outputs are 2-dimensional
-
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for animations
-            coarseness (float): The distance between sample points
-        """
-        def update(num):
-            ax.cla()
-            set_axes()
-            line = ax.plot(X,Ys[num],Zs[num])
-
-        def set_axes():
-            ax.set_xlim(0.0, 1.0)
-            ax.set_ylim(0.0, 1.0)
-            ax.set_zlim(0.0, 1.0)
-
-        fig = plt.figure()
-        ax = fig.gca(projection='3d')
-
-        L, step_size, X, Ys, Zs = self._setup_12(max_frames, coarseness)
-
-        line = ax.plot(X,Ys[0],Zs[0])
-        set_axes()
-
-        ani = animation.FuncAnimation(fig, update, len(Ys), interval=20)
-
-        plt.show()
-
-    def animate(self, max_frames=200, coarseness=None):
-        """
-        Animate (if possible), the function represented by this network over its
-        training life.
-        """
-        self._check_dimensions()
-        a,b = self._get_dimensions()
-        if coarseness == None:
-            if (a,b) in ((1,1), (1,2)):
-                coarseness = 0.005
+        def _setup_loss(self, n_frames=None, ax=None):
+            L = len(self.loss)
+            data = savgol_filter(self.loss, 2*L//100+1, 3)
+            minimum = min(data)
+            maximum = max(data)
+            if n_frames is None:
+                return data
             else:
-                coarseness = 0.05
-        f = getattr(self, '_animate_%s%s' % self._get_dimensions())
-        f(max_frames, coarseness)
+                step_size = L / n_frames
+                def update(num):
+                    ax.cla()
+                    set_axes()
+                    ax.plot(data[:int(round(num))])
 
+                def set_axes():
+                    ax.set_xlim(0, L)
+                    ax.set_ylim(minimum, maximum)
 
+                return data, update, set_axes
 
+        def _plot_function_11(self, x_range, **kwargs):
+            """
+            Plot the function represented by this network, assuming inputs and outputs are
+            both one-dimensional.
 
+            Parameters:
+                x_range (x_min, x_max, n_points): The minimum and maximum x-values to plot,
+                    and the number of points to use
+            """
+            X, Y = self._setup_11(x_range, **kwargs)
+            plt.plot(X, Y, **kwargs)
 
+        def _plot_function_12(self, x_range, **kwargs):
+            """
+            Plot the function represented by this network, assuming inputs are 1-dimensional
+            and outputs are 2-dimensional.
 
-    def _slider_11(self, max_frames, coarseness):
-        """
-        Plot the function represented by this network with a slider running over its
-        training life, assuming inputs and outputs are both 1-dimensional.
+            Parameters:
+                x_range (x_min, x_max, n_points): The minimum and maximum x-values to plot,
+                    and the number of points to use
+            """
+            X, Y, Z = self._setup_12(x_range, **kwargs)
 
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for animations
-            coarseness (float): The distance between sample points
-        """
-        def update(num):
-            ax.cla()
+            ax = plt.gca(projection='3d')
+            ax.plot(X, Y, Z, **kwargs)
+
+        def _plot_function_21(self, input_range, **kwargs):
+            """
+            Plot the function represented by this network, assuming inputs are 2-dimensional
+            and outputs are 1-dimensional.
+
+            Parameters:
+                input_range (tuple): A pair of 3-tuples, each consisting of minimum input,
+                    maximum input, and the number of input values for the two input axes.
+            """
+            X, Y, Z = self._setup_21(input_range[0], input_range[1], **kwargs)
+
+            ax = plt.gca(projection='3d')
+            ax.plot_surface(X,Y,Z)
+
+        def plot_function(self, input_range, **kwargs):
+            """
+            Plot (if possible) the function represented by this network.
+
+            Parameters:                                                                     ;;
+                input_range (tuple): If inputs to the network are 1-d, a 3-tuple consisting
+                    of minimum input, maximum input, and the number of input values. If
+                    inputs to the network are 2-d, a pair of 3-tuples, each consisting of
+                    the above data for the two input axes.
+                kwargs (keyword arguments): Will be passed to pyplot commands (for example,
+                    output range data can be passed here).
+            """
+            self._check_dimensions()
+            a,b = self._get_dimensions()
+            f = getattr(self, '_plot_function_%s%s' % (a,b))
+            f(input_range, **kwargs)
+
+        def plot_graph(self):
+            ax = plt.gca()
+            self._setup_graph(ax=ax)
+
+        def plot_loss(self):
+            """
+            Plot the (smoothed) loss function over this network's training life
+            """
+            data = self._setup_loss()
+            plt.plot(data)
+
+        def plot_all(self, input_range):
+            self._check_dimensions()
+            a,b = self._get_dimensions()
+            f = getattr(self, '_plot_function_%s%s' % (a,b))
+
+            plt.figure(figsize=(20,5))
+            plt.subplot(131)
+            f(input_range)
+            plt.subplot(132)
+            self.plot_graph()
+            plt.subplot(133)
+            self.plot_loss()
+
+        def _animate_function_11(self, x_range, n_frames, interval, **kwargs):
+            """
+            Animate the function represented by this network, assuming inputs and ouputs are
+            both 1-d
+
+            Parameters:
+                x_range (x_min, x_max, n_points): The minimum and maximum x-values to plot,
+                    and the number of points to use
+                n_frames (integer): The number of frames in the animation
+                kwargs (keyword arguments): Will be passed to pyplot commands (for example,
+                    output range data can be passed here).
+            """
+            ax = plt.gca()
+            fig = ax.get_figure()
+
+            X, Y, update = self._setup_11(x_range, n_frames=n_frames, ax=ax,
+                                          **kwargs)
+            L = len(self.weights)
+
+            ax.plot(X, Y, **kwargs)
+
+            return animation.FuncAnimation(fig, update,
+                                           np.linspace(0, L, n_frames,
+                                                       endpoint=False),
+                                           interval=interval)
+
+        def _animate_function_12(self, x_range, n_frames, interval, **kwargs):
+            """
+            Animate the function represented by this network over its training life,
+            assuming inputs are 1-dimensional and outputs are 2-dimensional
+
+            Parameters:
+                x_range (x_min, x_max, n_points): The minimum and maximum x-values to plot,
+                    and the number of points to use
+                n_frames (integer): The number of frames in the animation
+                kwargs (keyword arguments): Will be passed to pyplot commands (for example,
+                    output range data can be passed here).
+            """
+            ax = plt.gca(projection='3d')
+            fig = ax.get_figure()
+
+            X, Y, Z, update = self._setup_12(x_range, n_frames=n_frames, ax=ax,
+                                             **kwargs)
+            L = len(self.weights)
+
+            ax.plot(X, Y, Z, **kwargs)
+
+            return animation.FuncAnimation(fig, update,
+                                           np.linspace(0, L, n_frames,
+                                                       endpoint=False),
+                                           interval=interval)
+
+        def _animate_function_21(self, input_range, n_frames, interval, **kwargs):
+            """
+            Animate the function represented by this network over its training life,
+            assuming inputs are 2-dimensional and outputs are 1-dimensional
+
+            Parameters:
+                input_range (tuple): A pair of 3-tuples, each consisting of minimum input,
+                    maximum input, and the number of input values for the two input axes.
+                n_frames (integer): The number of frames in the animation
+                kwargs (keyword arguments): Will be passed to pyplot commands (for example,
+                    output range data can be passed here).
+            """
+
+            ax = plt.gca(projection='3d')
+            fig = ax.get_figure()
+
+            X, Y, Z, update = self._setup_21(input_range[0], input_range[1],
+                                             n_frames, ax=ax, **kwargs)
+            L = len(self.weights)
+
+            ax.plot_surface(X, Y, Z, **kwargs)
+
+            return animation.FuncAnimation(fig, update,
+                                           np.linspace(0, L, n_frames,
+                                                       endpoint=False),
+                                           interval=interval)
+
+        def animate_function(self, input_range, n_frames=200, interval=20, **kwargs):
+            """
+            Animate (if possible) the function represented by this network.
+
+            Parameters:
+                input_range (tuple): If inputs to the network are 1-d, a 3-tuple consisting
+                    of minimum input, maximum input, and the number of input values. If
+                    inputs to the network are 2-d, a pair of 3-tuples, each consisting of
+                    the above data for the two input axes.
+                n_frames (integer): The number of frames in the animation
+                kwargs (keyword arguments): Will be passed to pyplot commands (for example,
+                    output range data can be passed here).
+            """
+            self._check_dimensions()
+            a,b = self._get_dimensions()
+            f = getattr(self, '_animate_function_%s%s' % (a,b))
+            return f(input_range, n_frames, interval, **kwargs)
+
+        def animate_graph(self, n_frames=200, interval=50):
+            ax = plt.gca()
+            fig = ax.get_figure()
+            update = self._setup_graph(ax, n_frames)
+
+            L = len(self.weights)
+
+            return animation.FuncAnimation(fig, update,
+                                           np.linspace(0, L, n_frames,
+                                                       endpoint=False),
+                                           interval=interval)
+
+        def animate_loss(self, n_frames=200, interval=50):
+            ax = plt.gca()
+            fig = ax.get_figure()
+
+            data, update, set_axes = self._setup_loss(n_frames=n_frames, ax=ax)
+
+            L = len(self.loss)
+
+            ax.plot(data[:1])
             set_axes()
-            ax.plot(X, data[int(num//step_size)])
 
-        def set_axes():
-            ax.set_xlim(0.0, 1.0)
-            ax.set_ylim(0.0, 1.0)
+            return animation.FuncAnimation(fig, update,
+                                           np.linspace(0, L, n_frames,
+                                                       endpoint=False),
+                                           interval=interval)
 
-        L, step_size, data, X = self._setup_11(max_frames, coarseness)
+        def _animate_all_11(self, x_range, n_frames, interval):
+            L = len(self.loss)
+            dims = plt.figaspect(0.3)
+            fig = plt.figure(figsize=dims)
 
-        fig = plt.figure()
-        ax = fig.gca()
-        ax.plot(X,data[0])
-        set_axes()
+            ax_function = plt.subplot(131)
+            X, Y, update_function = self._setup_11(x_range, n_frames=n_frames,
+                                                   ax=ax_function)
+            ax_function.plot(X, Y)
 
-        axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
-        slider = Slider(axslider, 'Time', 0, L-1, valinit=0, valstep=step_size,
-                        orientation='vertical')
-        slider.on_changed(update)
+            ax_graph = plt.subplot(132)
+            update_graph = self._setup_graph(ax=ax_graph, n_frames=n_frames)
 
-        plt.show()
-
-    def _slider_21(self, max_frames, coarseness):
-        """
-        Plot the function represented by this network with a slider running over its
-        training life, assuming inputs are 2-dimensional and outputs are 1-dimensional
-
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for animations
-            coarseness (float): The distance between sample points
-        """
-        def update(num):
-            ax.cla()
+            ax_loss = plt.subplot(133)
+            data, update_loss, set_axes = self._setup_loss(ax=ax_loss, n_frames=n_frames)
+            ax_loss.plot(data[:1])
             set_axes()
-            surf = ax.plot_surface(X,Y,data[int(num//step_size)])
 
-        def set_axes():
-            ax.set_zlim(0.0, 1.0)
+            def update(num):
+                for f in [update_function, update_graph, update_loss]:
+                    f(num)
 
-        L, step_size, data, X, Y = self._setup_21(max_frames, coarseness)
+            return animation.FuncAnimation(fig, update,
+                                           np.linspace(0, L, n_frames,
+                                                       endpoint=False),
+                                           interval=interval)
 
-        fig = plt.figure()
-        ax = p3.Axes3D(fig)
+        def _animate_all_12(self, x_range, n_frames, interval):
+            pass
 
-        surf = ax.plot_surface(X,Y,data[0])
-        set_axes()
+        def _animate_all_21(self, input_range, n_frames, interval):
+            pass
 
-        axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
-        slider = Slider(axslider, 'Time', 0, L-1, valinit=0, valstep=step_size,
-                        orientation='vertical')
-        slider.on_changed(update)
+        def animate_all(self, input_range, n_frames=100, interval=100):
+            self._check_dimensions()
+            a,b = self._get_dimensions()
+            f = getattr(self, '_animate_all_%s%s' % (a,b))
+            return f(input_range, n_frames, interval)
 
-        plt.show()
+        def _slider_function_11(self, x_range, n_frames, **kwargs):
+            """
+            Plot the function represented by this network with a slider running over its
+            training life, assuming inputs and outputs are both 1-dimensional.
 
-    def _slider_12(self, max_frames, coarseness):
-        """
-        Plot the function represented by this network with a slider running over its
-        training life, assuming inputs are 1-dimensional and outputs are 2-dimensional
+            Parameters:
+                x_range (x_min, x_max, n_points): The minimum and maximum x-values to plot,
+                    and the number of points to use
+                n_frames (integer): The number of frames in the animation
+                kwargs (keyword arguments): Will be passed to pyplot commands (for example,
+                    output range data can be passed here).
+            """
+            _, (ax, axslider) = plt.subplots(2, 1, gridspec_kw={'height_ratios':(10,1)})
 
-        Parameters:
-            max_frames (integer): The maximum number of frames to use for animations
-            coarseness (float): The distance between sample points
-        """
-        def update(num):
-            ax.cla()
+            X, Y, update = self._setup_11(x_range, n_frames=n_frames, ax=ax,
+                                          **kwargs)
+
+            ax.plot(X, Y, **kwargs)
+
+            L = len(self.weights)
+            step_size = L / n_frames
+
+            slider = Slider(axslider, 'Time', 0, L-step_size, valinit=0,
+                            valstep=step_size, orientation='horizontal')
+            slider.on_changed(update)
+
+            return slider
+
+        def _slider_function_12(self, x_range, n_frames, **kwargs):
+            """
+            Plot the function represented by this network with a slider running over its
+            training life, assuming inputs are 1-dimensional and outputs are 2-dimensional
+
+            Parameters:
+                x_range (x_min, x_max, n_points): The minimum and maximum x-values to plot,
+                    and the number of points to use
+                n_frames (integer): The number of frames in the animation
+                kwargs (keyword arguments): Will be passed to pyplot commands (for example,
+                    output range data can be passed here).
+            """
+            ax = plt.gca(projection='3d')
+
+            X, Y, Z, update = self._setup_12(x_range, n_frames=n_frames, ax=ax,
+                                             **kwargs)
+
+            ax.plot(X, Y, Z, **kwargs)
+
+            L = len(self.weights)
+            step_size = L / n_frames
+
+            axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
+            slider = Slider(axslider, 'Time', 0, L-step_size, valinit=0,
+                            valstep=step_size, orientation='vertical')
+            slider.on_changed(update)
+
+            return slider
+
+        def _slider_function_21(self, input_range, n_frames, **kwargs):
+            """
+            Plot the function represented by this network with a slider running over its
+            training life, assuming inputs are 2-dimensional and outputs are 1-dimensional
+
+            Parameters:
+                input_range (tuple): A pair of 3-tuples, each consisting of minimum input,
+                    maximum input, and the number of input values for the two input axes.
+                n_frames (integer): The number of frames in the animation
+                kwargs (keyword arguments): Will be passed to pyplot commands (for example,
+                    output range data can be passed here).
+            """
+            ax = plt.gca(projection='3d')
+
+            X, Y, Z, update = self._setup_21(input_range[0], input_range[1],
+                                             n_frames, ax=ax, **kwargs)
+
+            ax.plot_surface(X, Y, Z, **kwargs)
+
+            L = len(self.weights)
+            step_size = L / n_frames
+
+            axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
+            slider = Slider(axslider, 'Time', 0, L-step_size, valinit=0,
+                            valstep=step_size, orientation='vertical')
+            slider.on_changed(update)
+
+            return slider
+
+        def slider_function(self, input_range, n_frames=200, **kwargs):
+            """
+            Parameters:
+                input_range (tuple): If inputs to the network are 1-d, a 3-tuple consisting
+                    of minimum input, maximum input, and the number of input values. If
+                    inputs to the network are 2-d, a pair of 3-tuples, each consisting of
+                    the above data for the two input axes.
+                n_frames (integer): The number of frames in the animation
+                kwargs (keyword arguments): Will be passed to pyplot commands (for example,
+                    output range data can be passed here).
+            """
+            self._check_dimensions()
+            a,b = self._get_dimensions()
+            f = getattr(self, '_slider_function_%s%s' % (a,b))
+            return f(input_range, n_frames, **kwargs)
+
+        def slider_graph(self, n_frames=200):
+            ax = plt.gca()
+            update = self._setup_graph(ax, n_frames)
+
+            L = len(self.weights)
+            step_size = L / n_frames
+
+            axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
+            slider = Slider(axslider, 'Time', 0, L-step_size, valinit=0,
+                            valstep=step_size, orientation='vertical')
+            slider.on_changed(update)
+
+            return slider
+
+        def slider_loss(self, n_frames=200):
+            ax = plt.gca()
+            data, update, set_axes = self._setup_loss(n_frames=n_frames, ax=ax)
+
+            ax.plot(data[:1])
             set_axes()
-            line = ax.plot(X,Ys[int(num//step_size)],Zs[int(num//step_size)])
 
-        def set_axes():
-            ax.set_xlim(0.0, 1.0)
-            ax.set_ylim(0.0, 1.0)
-            ax.set_zlim(0.0, 1.0)
+            L = len(self.loss)
+            step_size = L / n_frames
 
-        fig = plt.figure()
-        ax = fig.gca(projection='3d')
+            axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
+            slider = Slider(axslider, 'Time', 0, L-step_size, valinit=0,
+                            valstep=step_size, orientation='vertical')
+            slider.on_changed(update)
 
-        L, step_size, X, Ys, Zs = self._setup_12(max_frames, coarseness)
+            return slider
 
-        line = ax.plot(X,Ys[0],Zs[0])
-        set_axes()
+        def _slider_all_11(self, x_range, n_frames):
+            L = len(self.loss)
+            step_size = L / n_frames
+            dims = plt.figaspect(0.3)
 
-        axslider = plt.axes([0.03, 0.1, 0.03, 0.65])
-        slider = Slider(axslider, 'Time', 0, L-1, valinit=0, valstep=step_size,
-                        orientation='vertical')
-        slider.on_changed(update)
+            _, ((ax_function, ax_graph, ax_loss), (dump1, axslider, dump2)) = plt.subplots(2, 3, gridspec_kw={'height_ratios':(10,1)}, figsize=dims)
+            dump1.remove(), dump2.remove()
 
-        plt.show()
+            X, Y, update_function = self._setup_11(x_range, n_frames=n_frames,
+                                                   ax=ax_function)
+            update_graph = self._setup_graph(ax=ax_graph, n_frames=n_frames)
+            data, update_loss, set_axes = self._setup_loss(ax=ax_loss, n_frames=n_frames)
 
-    def slider(self, max_frames=200, coarseness=None):
-        """
-        Plot (if possible), the function represented by this network with a slider
-        running over its training life.
-        """
-        self._check_dimensions()
-        a,b = self._get_dimensions()
-        if coarseness == None:
-            if (a,b) in ((1,1), (1,2)):
-                coarseness = 0.01
-            else:
-                coarseness = 0.05
-        f = getattr(self, '_slider_%s%s' % self._get_dimensions())
-        f(max_frames, coarseness)
+            ax_function.plot(X, Y)
+            ax_loss.plot(data[:1])
+            set_axes()
+
+            def update(num):
+                for f in [update_function, update_graph, update_loss]:
+                    f(num)
+
+            slider = Slider(axslider, 'Time', 0, L-step_size, valinit=0,
+                            valstep=step_size, orientation='horizontal')
+            slider.on_changed(update)
+
+            return slider
+
+        def _slider_all_12(self, x_range, n_frames):
+            pass
+
+        def _slider_all_21(self, input_range, n_frames):
+            pass
+
+        def slider_all(self, input_range, n_frames=200):
+            self._check_dimensions()
+            a,b = self._get_dimensions()
+            f = getattr(self, '_slider_all_%s%s' % (a,b))
+            return f(input_range, n_frames)
