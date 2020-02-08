@@ -8,117 +8,7 @@ import itertools as iter
 rd = np.random
 from matplotlib.widgets import Slider
 from matplotlib import animation
-
-
-activators = {'sigmoid': '1/(1 + e^(-z))',
-              'arctan': 'arctan(z)/pi + 1/2',
-              'exponential': '1/2 e^z (if z <= 0), 1 - 1/2 e^(-z) (if z >= 0)',
-              'tanh': '1/2 (tanh(z) + 1)',
-              'relu': '0 (if z <= 0), z (if z >= 0)',
-              'lrelu': '0.01 z (if z <= 0), z (if z >= 0)',
-              'linear': 'z'}
-
-def sigmoid(z):
-    """
-    Sigmoidal activator function (between 0 and 1)
-    """
-    return 1/(1+np.exp(-z))
-
-def d_sigmoid(z):
-    """
-    Derivative of the sigmoidal activator
-    """
-    return sigmoid(z)*(1-sigmoid(z))
-
-def arctan(z):
-    """
-    (Shifted and scaled) arc-tangent activator function (between 0 and 1)
-    """
-    return np.arctan(z)/np.pi + np.float64(1)/2
-
-def d_arctan(z):
-    """
-    Derivative of the arc-tangent activator
-    """
-    return 1/(np.pi*(1+z**2))
-
-def exponential(z):
-    """
-    Piecewise exponential activator function (between 0 and 1)
-    """
-    if z <= 0:
-        return 1/2*np.exp(z)
-    if z >= 0:
-        return 1-1/2*np.exp(-z)
-
-def d_exponential(z):
-    """
-    Derivative of the exponential activator
-    """
-    if z <= 0:
-        return 1/2*np.exp(z)
-    if z >= 0:
-        return 1/2*np.exp(-z)
-
-def tanh(z):
-    """
-    (Shifted) hyperbolic tangent activator function
-    """
-    return 1/2*(np.tanh(z)+1)
-
-def d_tanh(z):
-    """
-    Derivative of the hyperbolic tangent activator
-    """
-    return 1/2*(1 - np.tanh(z)**2)
-
-def relu(z):
-    """
-    Rectified linear unit activator function
-    """
-    if z >= 0:
-        return z
-    if z <= 0:
-        return np.float64(0)
-
-def d_relu(z):
-    """
-    Derivative of the rectified linear unit activator
-    """
-    if z >= 0:
-        return np.float64(1)
-    if z <= 0:
-        return np.float64(0)
-
-def lrelu(z):
-    """
-    Leaky rectified linear unit activator function
-    """
-    if z >= 0:
-        return z
-    if z <= 0:
-        return 0.01*z
-
-def d_lrelu(z):
-    """
-    Derivative of the leaky rectified linear unit activator
-    """
-    if z >= 0:
-        return np.float64(1)
-    if z <= 0:
-        return 0.01
-
-def linear(z):
-    """
-    Linear activator function
-    """
-    return z
-
-def d_linear(z):
-    """
-    Derivative of the linear activator
-    """
-    return np.float64(1)
+import activators as acts
 
 class Neuron:
     """
@@ -131,7 +21,7 @@ class Neuron:
         activator (function): This neuron's activator function
         d_activator (function): The derivative of this neuron's activator
     """
-    def __init__(self, weights, bias, activator='sigmoid'):
+    def __init__(self, weights, bias=0, activator=acts.Sigmoid()):
         """
         Create a new Neuron instance.
 
@@ -144,18 +34,14 @@ class Neuron:
         """
         self.weights = np.array(weights, np.float64)
         self.bias = np.float64(bias)
-        self.activator_name = activator
-
-        # Get the activator function (and derivative) by name
-        self.activator = getattr(sys.modules[__name__], activator)
-        self.d_activator = getattr(sys.modules[__name__], 'd_' + activator)
+        self.activator = activator
 
     def __repr__(self):
         """
         Return a string representation of this neuron.
         """
         return "A neuron with weights %s, bias %s, and %s activator" \
-               % (self.weights, self.bias, self.activator_name)
+               % (self.weights, self.bias, self.activator)
 
     def fire(self, inputs, weights=None, bias=None):
         """
@@ -177,7 +63,7 @@ class Neuron:
             bias = self.bias
         self.inputs = np.array(inputs, np.float64)
         self.z = np.dot(inputs, weights) + bias
-        self.output = self.activator(self.z)
+        self.output = self.activator.f(self.z)
         return self.output
 
     def back_prop(self, inputs, rate=0.1):
@@ -194,10 +80,10 @@ class Neuron:
                 layer
         """
         # sigmoid has a nice derivative
-        if self.activator_name == 'sigmoid':
+        if self.activator == acts.Sigmoid():
             factor = sum(inputs) * self.output * (1-self.output)
         else:
-            factor = sum(inputs) * self.d_activator(self.z)
+            factor = sum(inputs) * self.activator.d(self.z)
         old_weights = np.array(self.weights) # Make a copy
 
         # update the weights with respect to learning rate
@@ -319,7 +205,8 @@ class NeuralNetwork:
             'weights', and 'biases', and values the corresponding data after each
             training step.
     """
-    def __init__(self, layer_sizes, connections=None, activators='sigmoid', log=True, loss='sum_of_squares'):
+    def __init__(self, layer_sizes, connections=None, activators=acts.Sigmoid(),
+                 log=True, loss='sum_of_squares'):
         """
         Create a new Neural Network instance.
 
@@ -327,7 +214,7 @@ class NeuralNetwork:
             layer_sizes (array of integers): The number of neurons in each layer
             connections (array of matrices): Adjecency matrices between layers (if None,
                 all neurons in two adjacent layers are connected)
-            activators (string | array of strings | dict | array of arrays of strings):
+            activators (Activator | array of Activators | dict | array of arrays of Activators):
                 If a string, the name of the activator function used for all neurons in
                 this network.
                 If an array of strings, the length of the array should be n_layers, and
@@ -353,21 +240,20 @@ class NeuralNetwork:
             self.connections = [np.array(connection)
                                 for connection in connections]
 
-        if type(activators) is str:
+        if isinstance(activators, acts.Activator):
             activators = [[activators]*n for n in layer_sizes[1:]]
         elif type(activators) is dict:
             activators = [[activators['hidden']]*n for n in layer_sizes[1:-1]] \
                        + [[activators['output']]*layer_sizes[-1]]
-        elif type(activators[0]) is str:
+        elif isinstance(activators[0], acts.Activator):
             activators = [[a]*n for a, n in zip(activators, layer_sizes)]
 
         self.loss_name = loss
         self.loss = getattr(sys.modules[__name__], loss)
         self.d_loss = getattr(sys.modules[__name__], 'd_'+loss)
-        self.neurons = [[Neuron(k[i] * rd.normal(size=n), 0,
-                                activator=a[i])
+        self.neurons = [[Neuron(k[i] * a[i].dist(k[i].sum(), n), activator=a[i])
                          for i in range(m)]
-                         for (n,m,k,a) in zip(layer_sizes,
+                        for (n,m,k,a) in zip(layer_sizes,
                                               layer_sizes[1:],
                                               self.connections,
                                               activators)]
@@ -406,7 +292,7 @@ class NeuralNetwork:
         if self.log:
             self.log = True
         self.__init__(self.layer_sizes, connections=self.connections,
-                      activator=self.activator_name, log=self.log,
+                      activator=self.activator, log=self.log,
                       loss=self.loss_name)
 
     def fire(self, inputs, weights=None, biases=None):
