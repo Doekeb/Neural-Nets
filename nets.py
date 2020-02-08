@@ -364,8 +364,7 @@ class NeuralNetwork:
         self.loss_name = loss
         self.loss = getattr(sys.modules[__name__], loss)
         self.d_loss = getattr(sys.modules[__name__], 'd_'+loss)
-        self.neurons = [[Neuron(k[i] * rd.normal(size=n),
-                                rd.normal(),
+        self.neurons = [[Neuron(k[i] * rd.normal(size=n), 0,
                                 activator=a[i])
                          for i in range(m)]
                          for (n,m,k,a) in zip(layer_sizes,
