@@ -14,7 +14,7 @@ class Loss(ABC):
         return type(self) == type(other)
 
     @abstractmethod
-    def function(self, results, target):
+    def function(self, results, targets):
         pass
 
     @abstractmethod
@@ -28,7 +28,7 @@ class SumOfSquares(Loss):
     def __repr__(self):
         return "Sum of squares loss function"
 
-    def function(self, results, target):
+    def function(self, results, targets):
         """
         Parameters:
             results (array of floats): The observed values
@@ -39,7 +39,7 @@ class SumOfSquares(Loss):
         """
         return sum((results-targets)**2)
 
-    def derivative(self, results, target):
+    def derivative(self, results, targets):
         """
         Multi-derivative of the sum of squares loss function
 
@@ -61,24 +61,11 @@ class MeanSquaredError(Loss):
     def __repr__(self):
         return "Mean squared error loss function"
 
-    def function(self, results, target):
+    def function(self, results, targets):
         return sum((results-targets)**2) / len(results)
 
-    def derivative(self, results, target):
+    def derivative(self, results, targets):
         return 2*(results-targets) / len(results)
-
-class L2(Loss):
-    """
-    L^2 metric loss function
-    """
-    def __repr__(self):
-        return "L^2 metric loss function"
-
-    def function(self, results, target):
-        return np.sqrt(sum((results-targets)**2))
-
-    def derivative(self, results, target):
-        return results / np.sqrt(sum((results-targets)**2))
 
 class Lp(Loss):
     """
@@ -94,12 +81,15 @@ class Lp(Loss):
     def __repr__(self):
         return "L^%s metric loss function" % (self.p,)
 
-    def function(self, results, target):
+    def function(self, results, targets):
         return np.power(sum(np.power(results-targets, p)), 1/p)
 
-    def derivative(self, results, target):
+    def derivative(self, results, targets):
         return results / np.power(sum(np.power(results-targets, p)), 1/p)
 
 class L2(Lp):
+    """
+    L^2 metric loss function
+    """
     def __init__(self):
         Lp.__init__(self, 2)

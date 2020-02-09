@@ -15,6 +15,9 @@ class Activator(ABC):
     def __eq__(self, other):
         return type(self) == type(other)
 
+    def __hash__(self):
+        return hash(type(self))
+
     @abstractmethod
     def function(self, z):
         pass
@@ -22,7 +25,7 @@ class Activator(ABC):
     @abstractmethod
     def derivative(self, z):
         pass
-        
+
     def distribution(self, n, k):
         """
         Return a random array of values from an appropriate initialization

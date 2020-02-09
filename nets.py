@@ -9,6 +9,10 @@ rd = np.random
 from matplotlib.widgets import Slider
 from matplotlib import animation
 import activators as acts
+import loss
+
+def sigmoid(z):
+    return 1/(1+np.exp(-z))
 
 class Neuron:
     """
@@ -96,97 +100,12 @@ class Neuron:
 
         return factor * old_weights
 
-def sum_of_squares(results, targets):
-    """
-    Sum of squares loss function
-
-    Parameters:
-        results (array of floats): The observed values
-        targets (array of floats): The desired values
-
-    Returns:
-        float: Measure of error between results and targets
-    """
-    return sum((results-targets)**2)
-
-def d_sum_of_squares(results, targets):
-    """
-    Multi-derivative of the sum of squares loss function
-
-    Parameters:
-        results (array of floats): The observed values
-        targets (array of floats): The desired values
-
-    Returns:
-        array of floats: Each entry is the derivative of the loss function with
-            respect to the corresponding coordinate (result) variable, evaluated at
-            the value of that result variable
-    """
-    return 2*(results-targets)
-
-def mse(results, targets):
-    """
-    Mean squared error loss function
-
-    Parameters:
-        results (array of floats): The observed values
-        targets (array of floats): The desired values
-
-    Returns:
-        float: Measure of error between results and targets
-    """
-    return sum((results-targets)**2) / len(results)
-
-def d_mse(results, targets):
-    """
-    Multi-derivative of the mean squared error loss function
-
-    Parameters:
-        results (array of floats): The observed values
-        targets (array of floats): The desired values
-
-    Returns:
-        array of floats: Each entry is the derivative of the loss function with
-            respect to the corresponding coordinate (result) variable, evaluated at
-            the value of that result variable
-    """
-    return 2*(results-targets) / len(results)
-
-def L2(results, targets):
-    """
-    L^2 metric loss function
-
-    Parameters:
-        results (array of floats): The observed values
-        targets (array of floats): The desired values
-
-    Returns:
-        float: Measure of error between results and targets
-    """
-    return np.sqrt(sum((results-targets)**2))
-
-def d_L2(results, targets):
-    """
-    Multi-derivative of the L^2 metric loss function
-
-    Parameters:
-        results (array of floats): The observed values
-        targets (array of floats): The desired values
-
-    Returns:
-        array of floats: Each entry is the derivative of the loss function with
-            respect to the corresponding coordinate (result) variable, evaluated at
-            the value of that result variable
-    """
-    return results / np.sqrt(sum((results-targets)**2))
 
 
 
-
-
-# activator can be a single string, e.g. 'sigmoid' or a dictionary with keywords
-# being neuron types and values the activator string names, or a list of strings
-# indicating the activator types per-layer, or a list of lists of strings
+# activator can be a single Activator, e.g. Sigmoid() or a dictionary with keywords
+# being neuron types and values the Activator, or a list of Activators
+# indicating the activator types per-layer, or a list of lists of Activators
 # indicating the activator types per-neuron
 
 class NeuralNetwork:
@@ -197,9 +116,7 @@ class NeuralNetwork:
         n_layers (integer): The number of (non-input) layers in this network
         layer_sizes (array of integers): The number of neurons in each layer
         connections (array of matrices): Adjecency matrices between layers
-        loss_name (string): The name of the loss function
-        loss (function): The loss function
-        d_loss (function): The derivative of the loss function
+        loss (loss.Loss): The name of the loss function
         neurons (array of arrays of Neurons): The list of Neurons at each layer,
             initiallized randomly
         log (False or dict): If False, training data is not logged. Otherwise, it is
@@ -208,7 +125,7 @@ class NeuralNetwork:
             training step.
     """
     def __init__(self, layer_sizes, connections=None, activators=acts.Sigmoid(),
-                 log=True, loss='sum_of_squares'):
+                 log=True, loss=loss.SumOfSquares()):
         """
         Create a new Neural Network instance.
 
@@ -250,9 +167,7 @@ class NeuralNetwork:
         elif isinstance(activators[0], acts.Activator):
             activators = [[a]*n for a, n in zip(activators, layer_sizes)]
 
-        self.loss_name = loss
-        self.loss = getattr(sys.modules[__name__], loss)
-        self.d_loss = getattr(sys.modules[__name__], 'd_'+loss)
+        self.loss = loss
         self.neurons = [[Neuron(k[i] * a[i].dist(k[i].sum(), n), activator=a[i])
                          for i in range(m)]
                         for (n,m,k,a) in zip(layer_sizes,
@@ -295,7 +210,7 @@ class NeuralNetwork:
             self.log = True
         self.__init__(self.layer_sizes, connections=self.connections,
                       activator=self.activator, log=self.log,
-                      loss=self.loss_name)
+                      loss=self.loss)
 
     def fire(self, inputs, weights=None, biases=None):
         """
@@ -408,8 +323,8 @@ class NeuralNetwork:
                 # Fire the network once for each sample
                 for (key, targets) in batch:
                     results = self.fire(np.array(key))
-                    loss_sum += self.loss(results, targets)
-                    d_loss_sums += self.d_loss(results, targets)
+                    loss_sum += self.loss.f(results, targets)
+                    d_loss_sums += self.loss.d(results, targets)
 
                 # Average the loss and its derivative
                 loss_average = loss_sum / len(batch)
@@ -628,18 +543,18 @@ class NeuralNetwork:
 
                     # Determine the shape to use and log it
                     if i == 0:
-                        activator_name = 'input'
+                        activator = 'input'
                     else:
-                        activator_name = neurons[i-1][n].activator_name
+                        activator = neurons[i-1][n].activator
                     try:
-                        shape = activator_shapes[activator_name]
+                        shape = activator_shapes[activator]
                     except KeyError:
                         try:
                             shape = shapes.pop()
                         except IndexError:
                             shape = '<'
                         finally:
-                            activator_shapes[activator_name] = shape
+                            activator_shapes[activator] = shape
                     sh[node] = shape
 
             # Add all edges to the graph
