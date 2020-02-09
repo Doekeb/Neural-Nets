@@ -82,6 +82,8 @@ class Neuron:
         # sigmoid has a nice derivative
         if self.activator == acts.Sigmoid():
             factor = sum(inputs) * self.output * (1-self.output)
+        elif self.activator == acts.Tanh():
+            factor = sum(inputs) * (1 - self.output**2)
         else:
             factor = sum(inputs) * self.activator.d(self.z)
         old_weights = np.array(self.weights) # Make a copy
